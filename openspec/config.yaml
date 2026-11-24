@@ -1,0 +1,71 @@
+schema: spec-driven
+
+context: |
+  Producto: sistema web de gestión de reservas de espacios académicos (laboratorios,
+  auditorios y salas de cómputo) para una sola institución universitaria. Reemplaza un
+  proceso manual basado en correo electrónico y hojas de cálculo. El repositorio es
+  actualmente un proyecto académico individual y está vacío: solo existen README.md,
+  AGENT_GUIDE.md y PLAN_INGENIERIA.md. No hay código, migraciones ni pruebas.
+
+  Fuente de verdad de la ingeniería: PLAN_INGENIERIA.md (aprobado y commiteado antes de
+  inicializar OpenSpec). Las especificaciones deben ser coherentes con él; si un requisito
+  contradice el plan, se señala en la revisión en lugar de decidirse en silencio.
+
+  Stack obligatorio:
+  - Backend: Go, biblioteca estándar net/http con el enrutador de patrones por método y
+    ruta de Go 1.22. Sin framework web.
+  - Persistencia: PostgreSQL, driver pgx/v5 (pgxpool), migraciones SQL versionadas con
+    golang-migrate, contraseñas con bcrypt (coste >= 12).
+  - Frontend: React + TypeScript en modo estricto, Vite, React Router, cliente HTTP
+    centralizado, pruebas con Vitest y React Testing Library.
+  - Autenticación: sesión opaca revocable almacenada en base de datos, enviada en cookie
+    HttpOnly SameSite=Lax. No se usa JWT.
+
+  Arquitectura: hexagonal (dominio, aplicación, puertos, adaptadores). Regla estricta de
+  dependencia: dominio y aplicación no dependen de HTTP, de React ni del driver de base de
+  datos. No se crean capas vacías ni servicios que solo reenvíen al repositorio.
+
+  Modelo de reservas: una sola entidad bookings con estado explícito y rango temporal
+  [starts_at, ends_at) en timestamptz. Estados: pendiente, aprobada, rechazada, cancelada;
+  rechazada y cancelada son terminales. "Finalizada" se deriva por fecha, no se almacena.
+
+  Política de disponibilidad aprobada (S-04): SOLO las reservas en estado aprobada bloquean
+  disponibilidad. Una solicitud pendiente no bloquea; su disponibilidad se revalida al
+  aprobar. La garantía de no-solapamiento es una restricción de exclusión en PostgreSQL:
+  EXCLUDE USING gist (space_id WITH =, tstzrange(starts_at, ends_at, '[)') WITH &&)
+  WHERE (status = 'aprobada'), requiriendo la extensión btree_gist. La validación previa en
+  la aplicación solo mejora el mensaje al usuario (409 con el conflicto), nunca es la
+  garantía.
+
+  Roles: administrador, solicitante, aprobador. Un usuario puede acumular varios roles
+  (relación N:M). La autorización se deriva de permisos en el servidor; el rol enviado por
+  el cliente se ignora siempre. Un aprobador no puede aprobar su propia solicitud.
+
+  Actores y permisos resumidos: administrador mantiene usuarios, roles y espacios y consulta
+  reservas; solicitante consulta espacios y disponibilidad, crea solicitudes y cancela las
+  propias según política; aprobador revisa pendientes y aprueba o rechaza con motivo.
+
+  Reglas de negocio propuestas y pendientes de confirmación institucional (deben aparecer en
+  las especificaciones como requisitos explícitos, no como constantes ocultas): zona horaria
+  America/Bogota (S-01); horario operativo lunes a viernes 06:00-22:00 y sábados 07:00-18:00
+  con domingos y festivos cerrado (S-02); anticipación mínima 24 horas y máxima 90 días
+  (S-03); autoaprobación prohibida (S-05); cancelación de pendiente en cualquier momento y de
+  aprobada hasta 24 horas antes del inicio, administrador sin límite (S-06); motivo
+  obligatorio al rechazar (S-07); multi-rol permitido (S-08); espacio desactivado no admite
+  nuevas solicitudes pero conserva historial (S-09); duración mínima 30 minutos y
+  granularidad 15 minutos (S-10).
+
+  Fuera de alcance del MVP: pagos, notificaciones externas, integración con calendarios,
+  reservas recurrentes, aplicación móvil nativa, carga masiva, registro público y
+  recuperación de contraseña por correo, aprobaciones multinivel, reportería avanzada. El MVP
+  no impone límite a la duración de una reserva individual; cualquier límite futuro se
+  gestionará como cambio formal.
+
+  Convenciones de idioma: los artefactos de OpenSpec, la documentación y los mensajes de
+  error visibles al usuario se escriben en español. Los identificadores de código (paquetes,
+  tipos, funciones, rutas HTTP y columnas de base de datos) se escriben en inglés.
+
+  Calidad: cada requisito debe tener escenarios verificables en formato Given/When/Then,
+  incluidos casos negativos y de permisos insuficientes. No se declara nada implementado sin
+  pruebas ejecutadas. Prohibido desactivar pruebas, linters o validaciones. Sin secretos ni
+  datos reales en el repositorio.
